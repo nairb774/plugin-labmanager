@@ -22,38 +22,46 @@
  */
 package hudson.plugins.labmanager;
 
-import hudson.util.FormValidation;
-import hudson.util.Scrambler;
+import hudson.Extension;
 import hudson.Util;
 import hudson.model.Descriptor;
 import hudson.model.Label;
-import hudson.Extension;
 import hudson.slaves.Cloud;
 import hudson.slaves.NodeProvisioner;
-import java.util.ArrayList;
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
+import hudson.util.FormValidation;
+import hudson.util.Scrambler;
 
+import java.security.KeyStore;
+import java.security.Provider;
+import java.security.Security;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
-import net.sf.json.JSONObject;
-import org.kohsuke.stapler.StaplerRequest;
-
-import java.security.Security;
-import java.security.KeyStore;
-import java.security.Provider;
-import java.security.cert.X509Certificate;
 import javax.net.ssl.ManagerFactoryParameters;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactorySpi;
 import javax.net.ssl.X509TrustManager;
 
-import com.vmware.labmanager.*;
-import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.*;
+import net.sf.json.JSONObject;
+
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
+import org.kohsuke.stapler.StaplerRequest;
+
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.ArrayOfMachine;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.AuthenticationHeader;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.AuthenticationHeaderE;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.GetSingleConfigurationByName;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.GetSingleConfigurationByNameResponse;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.ListMachines;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.ListMachinesResponse;
+import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.Machine;
 
 /**
  * Represents a virtual Lab Manager Organization/Workspace/Configuration
