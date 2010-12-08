@@ -25,6 +25,9 @@
         <f:entry title="${%LabManager Workspace}" help="/plugin/labmanager/help-labmanager-lmWorkspace.html">
             <f:textbox field="lmWorkspace" />
         </f:entry>
+        <f:entry title="${%Ignore SSL Certificate Errors}" description="${%When enabled, ignores ssl certificate errors. Useful if the LabManager certificate is self signed.}" help="/plugin/labmanager/help-labmanager-insecureSsl.html">
+            <f:checkbox field="insecureSsl"/>
+        </f:entry>
     </f:advanced>
     <f:validateButton title="${%Test Connection}" progress="${%Testing...}" method="testConnection" with="lmHost,lmDescription,lmOrganization,lmWorkspace,lmConfiguration,username,password"/>
 </j:jelly>

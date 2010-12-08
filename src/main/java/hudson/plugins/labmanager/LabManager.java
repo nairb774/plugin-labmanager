@@ -31,9 +31,14 @@ import hudson.slaves.NodeProvisioner;
 import hudson.util.FormValidation;
 import hudson.util.Scrambler;
 
-import java.security.KeyStore;
-import java.security.Provider;
-import java.security.Security;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.MalformedURLException;
+import java.net.Socket;
+import java.net.URL;
+import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -41,14 +46,23 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
-import javax.net.ssl.ManagerFactoryParameters;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactorySpi;
 import javax.net.ssl.X509TrustManager;
 
 import net.sf.json.JSONObject;
 
+import org.apache.axis2.client.Options;
+import org.apache.axis2.transport.http.HTTPConstants;
+import org.apache.commons.httpclient.ConnectTimeoutException;
+import org.apache.commons.httpclient.params.HttpConnectionParams;
+import org.apache.commons.httpclient.protocol.Protocol;
+import org.apache.commons.httpclient.protocol.ProtocolSocketFactory;
+import org.apache.commons.httpclient.protocol.SecureProtocolSocketFactory;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
@@ -70,6 +84,7 @@ import com.vmware.labmanager.LabManager_x0020_SOAP_x0020_interfaceStub.Machine;
  * @author Tom Rini <tom_rini@mentor.com>
  */
 public class LabManager extends Cloud {
+    private static final Logger LOGGER = Logger.getLogger(LabManager.class.getName());
     private final String lmHost;
     private final String lmDescription;
     private final String lmOrganization;
@@ -77,6 +92,7 @@ public class LabManager extends Cloud {
     private final String lmConfiguration;
     private final String username;
     private final String password;
+    private final boolean insecureSsl;
 
     /**
      * Information to connect to Lab Manager and send SOAP requests.
@@ -92,7 +108,7 @@ public class LabManager extends Cloud {
     public LabManager(String lmHost, String lmDescription,
                     String lmOrganization, String lmWorkspace,
                     String lmConfiguration, String username,
-                    String password) {
+                    String password, boolean insecureSsl) {
         super("LabManager");
         this.lmHost = lmHost;
         this.lmDescription = lmDescription;
@@ -111,15 +127,7 @@ public class LabManager extends Cloud {
         this.lmAuth = new AuthenticationHeaderE();
         this.lmAuth.setAuthenticationHeader(ah);
         virtualMachineList = retrieveLabManagerVirtualMachines();
-    }
-
-    /* This is something that we need to make sure
-     * happens when Hudson is restarted for example. */
-    private void fixTrustManager() {
-        /* Install the all-trusting trust manager */
-        Security.addProvider( new DummyTrustProvider() );
-        Security.setProperty("ssl.TrustManagerFactory.algorithm",
-            "TrustAllCertificates");
+        this.insecureSsl = insecureSsl;
     }
 
     public String getLmHost() {
@@ -150,18 +158,36 @@ public class LabManager extends Cloud {
         return Scrambler.descramble(password);
     }
 
-    public LabManager_x0020_SOAP_x0020_interfaceStub getLmStub() {
-        /* Make sure the trust manager is right. */
-        fixTrustManager();
-
+    private static LabManager_x0020_SOAP_x0020_interfaceStub getLmStub(final String lmHost, final boolean insecureSsl) {
         LabManager_x0020_SOAP_x0020_interfaceStub lmStub = null;
         try {
             lmStub = new LabManager_x0020_SOAP_x0020_interfaceStub(lmHost + "/LabManager/SOAP/LabManager.asmx");
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        
+        if (insecureSsl) {
+            try {
+                final Options options = lmStub._getServiceClient().getOptions();
+                if ("https".equals(new URL(options.getTo().getAddress()).getProtocol())) {
+                    options.setProperty(HTTPConstants.CUSTOM_PROTOCOL_HANDLER, new Protocol("https",
+                            (ProtocolSocketFactory) new InsecureProtocolSocketFactory(), 443));
+                }
+            } catch (final KeyManagementException e) {
+                LOGGER.log(Level.WARNING, "Unable to bypass SSL checking. Please check your JVM setup.", e);
+            } catch (final NoSuchAlgorithmException e) {
+                LOGGER.log(Level.WARNING, "Unable to bypass SSL checking. Please check your JVM setup.", e);
+            } catch (final MalformedURLException e) {
+                LOGGER.log(Level.WARNING, "The url to the lab manager endpoint seems to be malformed. "
+                        + "Please check your configuration.", e);
+            }
+        }
 
         return lmStub;
+    }
+    
+    public LabManager_x0020_SOAP_x0020_interfaceStub getLmStub() {
+        return getLmStub(lmHost, insecureSsl);
     }
 
     public AuthenticationHeaderE getLmAuth() {
@@ -262,7 +288,8 @@ public class LabManager extends Cloud {
                 @QueryParameter String lmWorkspace,
                 @QueryParameter String lmConfiguration,
                 @QueryParameter String username,
-                @QueryParameter String password) {
+                @QueryParameter String password,
+                @QueryParameter boolean insecureSsl) {
             try {
                 /* We know that these objects are not null */
                 if (lmHost.length() == 0)
@@ -285,13 +312,8 @@ public class LabManager extends Cloud {
                 if (password.length() == 0)
                     return FormValidation.error("Password is not specified");
 
-                /* Install the all-trusting trust manager */
-                Security.addProvider( new DummyTrustProvider() );
-                Security.setProperty("ssl.TrustManagerFactory.algorithm",
-                    "TrustAllCertificates");
-
                 /* Try and connect to it. */
-                LabManager_x0020_SOAP_x0020_interfaceStub stub = new LabManager_x0020_SOAP_x0020_interfaceStub(lmHost + "/LabManager/SOAP/LabManager.asmx");
+                LabManager_x0020_SOAP_x0020_interfaceStub stub = getLmStub(lmHost, insecureSsl);
                 AuthenticationHeader ah = new AuthenticationHeader();
                 ah.setUsername(username);
                 ah.setPassword(password);
@@ -312,36 +334,44 @@ public class LabManager extends Cloud {
         }
     }
 
-    /**
-     * This is taken from:
-     * http://knowledgehub.zeus.com/articles/2006/01/03/using_the_control_api_with_java
-     * The following code disables certificate checking.
-     * Use the Security.addProvider and Security.setProperty calls to enable it.
-     **/
+    private static class InsecureProtocolSocketFactory implements SecureProtocolSocketFactory {
+        private final SSLSocketFactory socketFactory;
 
-    private static class DummyTrustProvider extends Provider {
-        public DummyTrustProvider() {
-            super( "DummyTrustProvider", 1.0, "Trust certificates" );
-            put( "TrustManagerFactory.TrustAllCertificates",
-                MyTrustManagerFactory.class.getName() );
+        public InsecureProtocolSocketFactory() throws NoSuchAlgorithmException, KeyManagementException {
+            final SSLContext context = SSLContext.getInstance("SSL");
+            context.init(null, new TrustManager[] { new InsecureTrustManager() }, null);
+            socketFactory = context.getSocketFactory();
         }
 
-        protected static class MyTrustManagerFactory extends TrustManagerFactorySpi {
-            public MyTrustManagerFactory() {}
-            protected void engineInit(KeyStore keystore) {}
-            protected void engineInit(ManagerFactoryParameters mgrparams) {}
-            protected TrustManager[] engineGetTrustManagers() {
-                return new TrustManager[] {new MyX509TrustManager()};
-            }
+        public Socket createSocket(String host, int port, InetAddress localAddress, int localPort) throws IOException,
+                UnknownHostException {
+            return socketFactory.createSocket(host, port, localAddress, localPort);
         }
 
-        protected static class MyX509TrustManager implements X509TrustManager {
+        public Socket createSocket(String host, int port, InetAddress localAddress, int localPort,
+                HttpConnectionParams params) throws IOException, UnknownHostException, ConnectTimeoutException {
+            return createSocket(host, port, localAddress, localPort);
+        }
 
-            public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-            public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-            public X509Certificate[] getAcceptedIssuers() {
-                return null;
-            }
+        public Socket createSocket(String host, int port) throws IOException, UnknownHostException {
+            return socketFactory.createSocket(host, port);
+        }
+
+        public Socket createSocket(Socket socket, String host, int port, boolean autoClose) throws IOException,
+                UnknownHostException {
+            return socketFactory.createSocket(socket, host, port, autoClose);
+        }
+    }
+
+    private static class InsecureTrustManager implements X509TrustManager {
+        public void checkClientTrusted(final X509Certificate[] chain, final String authType) {
+        }
+
+        public void checkServerTrusted(final X509Certificate[] chain, final String authType) {
+        }
+
+        public X509Certificate[] getAcceptedIssuers() {
+            return null;
         }
     }
 }
